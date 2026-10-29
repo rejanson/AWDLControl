@@ -750,7 +750,7 @@ In order to operate AWDL Control must register a helper.</string>
                     <modifierMask key="keyEquivalentModifierMask"/>
                 </menuItem>
                 <menuItem isSeparatorItem="YES" id="kI5-Jz-GHX"/>
-                <menuItem title="Game Mode" state="on" secondaryImage="gamecontroller" catalog="system" id="VuT-Iy-fKj">
+                <menuItem title="Automatic (Games &amp; Chromecast)" state="on" secondaryImage="gamecontroller" catalog="system" id="VuT-Iy-fKj">
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <connections>
                         <action selector="goAuto:" target="Voe-Tx-rLC" id="6au-aG-1E2"/>

@@ -4,7 +4,7 @@ Apple Wireless Direct Link (AWDL) is a technology built in to macOS and iOS that
 
 AWDL can cause network lag spikes when playing online multiplayer games or when game streaming over WiFi. These spikes can be caused by background activity on your Mac, or they can even be caused by other nearby Apple devices!
 
-AWDL Control is a Mac app that automatically disables AWDL when the active application is a game, and then automatically brings it back up when you quit the game or switch back to your desktop. This preserves the useful Apple ecosystem functionality that AWDL provides, while preventing network lag spikes in game when you don't need AirDrop or related features.
+AWDL Control is a Mac app that automatically disables AWDL while you are playing a game or mirroring a Chrome tab or desktop to Chromecast over WiFi. It brings AWDL back up when neither activity needs it. This preserves the useful Apple ecosystem functionality that AWDL provides, while preventing AWDL-related network lag spikes during games and casting.
 
 ## System Requirements
 
@@ -27,12 +27,21 @@ Once AWDL Control is installed and its helper is registered, it lives in your Ma
 
 AWDL Control has 3 modes:
 
-* Game Mode
-    - AWDL will be disabled when on WiFi and you are actively playing a game.
+* Automatic (Games & Chromecast)
+    - AWDL will be disabled when on WiFi and you are actively playing a game or casting a tab/desktop from Google Chrome to Chromecast.
+    - Casting stays protected when you switch to another application. AWDL is restored after casting stops, unless a game is still active.
 * AWDL On
     - Allow AWDL connections. This is the stock / out of the box Mac setting.
 * AWDL Off
     - Suppress AWDL connections at all times. Useful if the app you're using is network latency sensitive, but isn't identifiable as a game.
+
+### Chromecast
+
+Select **Automatic (Games & Chromecast)**, then start casting a tab or your screen from Google Chrome. Within a few seconds, the menu should show **Active for Chromecast**. Stop casting in Chrome to restore AWDL automatically. Existing Game Mode settings carry over to Automatic.
+
+Detection supports Google Chrome (including Beta, Dev, and Canary) and Chromium. It detects Chrome's mirroring service, not simply an open browser or a nearby Chromecast. Playback that runs directly on the receiver (for example, a website handing a video URL to the TV) may not launch this service and is not detected. Other sender apps are not covered; use **AWDL Off** if needed, then return to Automatic afterwards.
+
+AirDrop and AWDL-dependent Continuity features are unavailable while AWDL is disabled. **AWDL On** always overrides automatic detection. This addresses AWDL-related interference; it does not fix every possible cause of casting lag.
 
 ## Uninstallation
 
@@ -89,6 +98,14 @@ AWDL Control uses approximately the same mechanism as macOS does to determine wh
 
 * `LSApplicationCategoryType = "public.app-category.games"`
 * `LSSupportsGameMode = true`
+
+### Chromecast Detection
+
+Chrome launches a dedicated utility process for Cast mirroring and keeps it alive for the session (see Chromium's [CastMirroringServiceHost](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/media/cast_mirroring_service_host.cc)). AWDL Control checks for that service in the current user's running Chrome instances, independently of the foreground application. The detector runs in the unprivileged UI application; the helper and its interface are unchanged.
+
+This deliberately avoids treating Cast discovery or an idle TCP connection as an active stream. It does not read browser pages, capture packets, or contact receivers. The process marker is a Chromium implementation detail, so future Chrome changes may require an update. If inspection fails, the detector reports no casting; **AWDL Off** remains the manual fallback.
+
+See [Tests/README.md](Tests/README.md) for automated checks and the hardware verification procedure.
 
 ## Dear Apple
 

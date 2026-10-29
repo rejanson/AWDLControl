@@ -9,6 +9,7 @@
 
 #import "../Common/HelperProtocol.h"
 #import "Reachability.h"
+#import "ChromecastMonitor.h"
 
 #import <os/log.h>
 #import <ServiceManagement/ServiceManagement.h>
@@ -17,7 +18,7 @@
 #define LOG OS_LOG_DEFAULT
 
 typedef NS_ENUM(NSInteger, AWDLMode) {
-    AWDLModeGame,
+    AWDLModeAutomatic,
     AWDLModeUp,
     AWDLModeDown,
 };
@@ -63,6 +64,7 @@ NSString *const DefaultsSendNotifications = @"SendNotifications";
 
 @property Reachability *reachability;
 @property NSRunningApplication *lastGameApp;
+@property ChromecastMonitor *chromecastMonitor;
 
 @end
 
@@ -74,15 +76,18 @@ NSString *const DefaultsSendNotifications = @"SendNotifications";
     _awdlMode = [[NSUserDefaults standardUserDefaults] integerForKey:DefaultsAWDLMode];
     _hideStatusItemWithoutTerminating = [[NSUserDefaults standardUserDefaults] boolForKey:DefaultsHideWithoutTerminating];
     self.helperService = [SMAppService daemonServiceWithPlistName:@"com.jh.AWDLControl.Helper.plist"];
-    [self updateHelperStatus];
+    self.chromecastMonitor = [ChromecastMonitor new];
 
     [[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:self selector:@selector(updateAutoAWDLMode) name:NSWorkspaceDidActivateApplicationNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateAutoAWDLMode) name:ReachabilityDidChangeNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateAutoAWDLMode) name:ChromecastMonitorDidChangeNotification object:self.chromecastMonitor];
     self.reachability = [Reachability new];
+    [self updateHelperStatus];
 }
 
 - (void)applicationWillTerminate:(NSNotification *)aNotification {
-    // Insert code here to tear down your application
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:ChromecastMonitorDidChangeNotification object:self.chromecastMonitor];
+    [self.chromecastMonitor stop];
 }
 
 - (BOOL)applicationSupportsSecureRestorableState:(NSApplication *)app {
@@ -131,7 +136,7 @@ NSString *const DefaultsSendNotifications = @"SendNotifications";
 }
 
 - (IBAction)goAuto:(id)sender {
-    [self setAWDLMode:AWDLModeGame];
+    [self setAWDLMode:AWDLModeAutomatic];
 }
 
 - (IBAction)goDown:(id)sender {
@@ -155,7 +160,7 @@ NSString *const DefaultsSendNotifications = @"SendNotifications";
     alert.informativeText = [NSString stringWithFormat:@"%@ will stay running in the background in its current mode. Double click %@ from the Finder to re-show its menu bar item.", appName, appName];
 
     NSButton *notificationsButton = nil;
-    if (_awdlMode == AWDLModeGame) {
+    if (_awdlMode == AWDLModeAutomatic) {
         notificationsButton = [NSButton checkboxWithTitle:@"Show notifications when AWDL changes" target:nil action:nil];
         notificationsButton.state = [[NSUserDefaults standardUserDefaults] boolForKey:DefaultsSendNotifications] ? NSControlStateValueOn : NSControlStateValueOff;
         alert.accessoryView = notificationsButton;
@@ -219,8 +224,18 @@ NSString *const DefaultsSendNotifications = @"SendNotifications";
     return nil;
 }
 
+- (void)updateChromecastMonitoring {
+    if (_awdlMode == AWDLModeAutomatic && self.helperConnection
+        && self.reachability.interfaceType == nw_interface_type_wifi) {
+        [self.chromecastMonitor start];
+    } else {
+        [self.chromecastMonitor stop];
+    }
+}
+
 - (void)updateAutoAWDLMode {
-    if (_awdlMode != AWDLModeGame || !self.helperConnection)
+    [self updateChromecastMonitoring];
+    if (_awdlMode != AWDLModeAutomatic || !self.helperConnection)
         return;
 
     BOOL onWiFi = _reachability.interfaceType == nw_interface_type_wifi;
@@ -231,7 +246,7 @@ NSString *const DefaultsSendNotifications = @"SendNotifications";
     }
 
     NSInteger lastEnabled = _awdlEnabled;
-    [self setAWDLEnabled:!(onWiFi && inGame)];
+    [self setAWDLEnabled:!(onWiFi && (inGame || self.chromecastMonitor.isCasting))];
     NSInteger enabled = _awdlEnabled;
 
     if (lastEnabled != enabled && (lastEnabled != -1 || enabled == 0) && self.hideStatusItemWithoutTerminating && [[NSUserDefaults standardUserDefaults] boolForKey:DefaultsSendNotifications]) {
@@ -240,7 +255,8 @@ NSString *const DefaultsSendNotifications = @"SendNotifications";
         if (enabled == 1) {
             noteContent.subtitle = @"AirDrop & Continuity are now available";
         } else {
-            noteContent.subtitle = [NSString stringWithFormat:@"AWDL is disabled while using %@. AirDrop & Continuity are unavailable.", gameApp.localizedName];
+            NSString *activity = self.chromecastMonitor.isCasting ? @"Chromecast" : gameApp.localizedName;
+            noteContent.subtitle = [NSString stringWithFormat:@"AWDL is disabled while using %@. AirDrop & Continuity are unavailable.", activity];
         }
         UNNotificationRequest *note = [UNNotificationRequest requestWithIdentifier:@"AWDLChange" content:noteContent trigger:nil];
         [[UNUserNotificationCenter currentNotificationCenter] addNotificationRequest:note withCompletionHandler:nil];
@@ -250,6 +266,7 @@ NSString *const DefaultsSendNotifications = @"SendNotifications";
 - (void)setAWDLMode:(AWDLMode)mode {
     _awdlMode = mode;
     [[NSUserDefaults standardUserDefaults] setInteger:_awdlMode forKey:@"AWDLMode"];
+    [self updateChromecastMonitoring];
     switch (mode) {
         case AWDLModeDown:
             [self setAWDLEnabled:NO];
@@ -263,7 +280,7 @@ NSString *const DefaultsSendNotifications = @"SendNotifications";
             _downMenuItem.state = NSControlStateValueOff;
             _upMenuItem.state = NSControlStateValueOn;
             break;
-        case AWDLModeGame:
+        case AWDLModeAutomatic:
         default:
             _gameModeMenuItem.state = NSControlStateValueOn;
             _downMenuItem.state = NSControlStateValueOff;
@@ -294,13 +311,16 @@ NSString *const DefaultsSendNotifications = @"SendNotifications";
         _activeMenuItem.title = @"Helper Inactive";
         _activeMenuItem.hidden = NO;
         _activeMenuSeparator.hidden = NO;
-    } else if (_awdlMode == AWDLModeGame) {
+    } else if (_awdlMode == AWDLModeAutomatic) {
         if (self.reachability.interfaceType == nw_interface_type_wired) {
             _activeMenuItem.image = nil;
             _activeMenuItem.title = @"Connected via Ethernet";
         } else if (self.reachability.interfaceType != nw_interface_type_wifi) {
             _activeMenuItem.image = nil;
             _activeMenuItem.title = @"Not Connected via Wi-Fi";
+        } else if (self.chromecastMonitor.isCasting) {
+            _activeMenuItem.image = [NSImage imageWithSystemSymbolName:@"tv" accessibilityDescription:nil];
+            _activeMenuItem.title = @"Active for Chromecast";
         } else if (self.lastGameApp.active) {
             _activeMenuItem.image = [self.lastGameApp.icon menuItemImage];
             _activeMenuItem.title = [NSString stringWithFormat:@"Active for %@", self.lastGameApp.localizedName];
@@ -309,7 +329,7 @@ NSString *const DefaultsSendNotifications = @"SendNotifications";
             _activeMenuItem.title = [NSString stringWithFormat:@"Previously Active for %@", self.lastGameApp.localizedName];
         } else {
             _activeMenuItem.image = nil;
-            _activeMenuItem.title = @"No Active Games";
+            _activeMenuItem.title = @"No Active Games or Chromecast";
         }
         _activeMenuItem.hidden = NO;
         _activeMenuSeparator.hidden = NO;
@@ -406,6 +426,7 @@ NSString *const DefaultsSendNotifications = @"SendNotifications";
     self.receivedHelperCheckinReply = NO;
     [self.helperConnection invalidate];
     self.helperConnection = nil;
+    [self updateAutoAWDLMode];
 
     self.reregisterCount++;
 
