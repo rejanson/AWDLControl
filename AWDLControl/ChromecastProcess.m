@@ -5,7 +5,7 @@
 #import <unistd.h>
 
 static const size_t MaximumArgumentsSize = 2 * 1024 * 1024;
-static const size_t MaximumChildren = 4096;
+enum { MaximumChildren = 4096 };
 
 BOOL ChromecastArgumentsIndicateMirroring(const void *bytes, size_t length) {
     if (!bytes || length <= sizeof(int) || length > MaximumArgumentsSize) {
